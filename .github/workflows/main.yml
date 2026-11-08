@@ -1,0 +1,184 @@
+# Название всего автоматического процесса
+name: Unity 2D Platformer CI/CD
+
+# Условие запуска: реагировать на любой push в главную ветку main
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  # ЗАДАЧА 1: Быстрая диагностика структуры проекта (Sanity Check)
+  sanity_check:
+    runs-on: ubuntu-latest # Запуск на бесплатном облачном сервере Linux
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # Скачиваем код проекта на облачный сервер
+
+      - name: Check Unity Directories
+        run: |
+          echo "=== Проверка наличия метаданных Unity ==="
+          if [ -d "ProjectSettings" ]; then echo "ProjectSettings найден."; else echo "Ошибка!" && exit 1; fi
+          if [ -d "Packages" ]; then echo "Packages найден."; else echo "Ошибка!" && exit 1; fi
+
+      - name: Locate 2D Platformer Scripts and Tests
+        run: |
+          echo "=== Поиск C# скриптов и тестов в проекте ==="
+          find Assets/ -name "BuildManager.cs" -print
+          find Assets/Tests -name "*.asmdef" -print
+          find Assets/Tests -name "SimulationTests.cs" -print
+
+      - name: Check Docker and Nginx Configuration
+        run: |
+          echo "=== Проверка конфигурации контейнеризации (ЛР №3) ==="
+          if [ -f "nginx.conf" ]; then echo "nginx.conf найден."; else echo "Ошибка!" && exit 1; fi
+          if [ -f "Dockerfile" ]; then echo "Dockerfile найден."; else echo "Ошибка!" && exit 1; fi
+
+  # ЗАДАЧА 2 (ЛР №4): Автоматический запуск тестов Unity
+  run_tests:
+    needs: sanity_check # Тесты запускаются сразу после проверки структуры проекта
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true # Активируем поддержку Git LFS, если в игре есть тяжелая графика
+
+      # Создаем кэш для папки Library, чтобы тесты запускались быстрее
+      - uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ hashFiles('Packages/packages-lock.json', 'Assets/**/*.asmdef') }}
+
+      # Официальный CLI GameCI с фиксированной версией
+      - name: Install GameCI CLI
+        run: |
+          curl -sL -o game-ci.tar.gz https://github.com/game-ci/cli/releases/download/v0.1.72/game-ci-linux-x64.tar.gz
+          tar xzf game-ci.tar.gz ./game-ci
+          echo "$PWD" >> $GITHUB_PATH
+
+      # Запуск тестов EditMode и PlayMode в контейнере unityci/editor.
+      # CLI вызывается напрямую, а не через game-ci/unity-test-runner@v4:
+      # текущий экшен формирует флаг --no-coverageEnabled, которого CLI
+      # v0.1.72 не понимает (Unknown argument, exit code 1). Рабочая форма -
+      # --coverageEnabled=false. Coverage отключен, т.к. инструментирование
+      # кода роняет Unity 6 в контейнере (SIGSEGV, exit code 139).
+      - name: Run Unity Tests
+        run: |
+          game-ci test --docker --dockerShmSize=1025m \
+            --engine=unity --testPlatforms='playmode;editmode;COMBINE_RESULTS' \
+            --engineVersion=6000.3.10f1 --coverageEnabled=false \
+            --artifactsPath=artifacts --dockerIsolationMode=default \
+            --containerRegistryRepository=unityci/editor \
+            --containerRegistryImageVersion=3
+        env:
+          # Секреты лицензии Unity для активации редактора на раннере
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+
+      # Сохраняем результаты и логи тестов артефактами (даже при падении)
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: artifacts/
+
+  # ЗАДАЧА 3 (ЛР №5): Настоящая компиляция игры в облаке
+  build_game:
+    needs: run_tests # Запустится только если тесты из ЛР №4 прошли успешно!
+    runs-on: ubuntu-latest
+    outputs:
+      build_status: ${{ job.status }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          lfs: true # В игре могут быть тяжелые бинарные ассеты
+
+      # Кэшируем Library, чтобы компиляция не шла вечность
+      - uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-Build-${{ hashFiles('Packages/packages-lock.json', 'Assets/**/*.asmdef') }}
+
+      # Вызываем облачный компилятор Unity 6 от GameCI
+      - name: Build WebGL Player
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          targetPlatform: WebGL
+          # Вызов C# метода автоматизации из Лабораторной работы №1!
+          buildMethod: BuildManager.BuildWebGL
+          # Версия Unity указывается явно: ProjectVersion.txt в .gitignore
+          unityVersion: 6000.3.10f1
+
+      # Сохраняем НАСТОЯЩИЕ скомпилированные файлы во временное облачное хранилище
+      - name: Upload WebGL Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebGL-Build
+          path: Builds/WebGL
+
+  # ЗАДАЧА 4 (ЛР №5): Сборка Docker-образа с НАСТОЯЩЕЙ игрой
+  build_docker_image:
+    needs: build_game # Теперь ждем полноценного билда игры!
+    runs-on: ubuntu-latest
+    # КРИТИЧЕСКИ ВАЖНЫЕ СТРОКИ: Разрешаем этой конкретной задаче публиковать пакеты
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Вместо генерации фейковых заглушек (touch) скачиваем живой билд из задачи build_game!
+      - name: Download WebGL Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: WebGL-Build
+          path: Builds/WebGL
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }} # Системный автоматический токен GitHub
+
+      - name: Build and Push Compressed Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ghcr.io/temmie4real/platformer-game:latest
+            ghcr.io/temmie4real/platformer-game:${{ github.sha }}
+
+  # ЗАДАЧА 5 (ЛР №5): Автоматический деплой игры на GitHub Pages
+  deploy_to_pages:
+    needs: build_game # Деплоим только успешно собранную игру
+    runs-on: ubuntu-latest
+    # Публикация в ветку gh-pages требует прав на запись содержимого репозитория
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download WebGL Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: WebGL-Build
+          path: Builds/WebGL
+
+      # Публикуем папку Builds/WebGL в специальную служебную ветку gh-pages
+      - name: Deploy to GitHub Pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: Builds/WebGL
+          branch: gh-pages # Ветка для хостинга страниц
