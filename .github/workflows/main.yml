@@ -117,7 +117,7 @@ jobs:
           targetPlatform: WebGL
           # Вызов C# метода автоматизации из Лабораторной работы №1!
           buildMethod: BuildManager.BuildWebGL
-          customImage: unityci/editor:ubuntu-6000.3.10f1-linux-il2cpp-3
+          customImage: unityci/editor:ubuntu-6000.3.10f1-webgl-3
 
       # Сохраняем НАСТОЯЩИЕ скомпилированные файлы во временное облачное хранилище
       - name: Upload WebGL Artifact
