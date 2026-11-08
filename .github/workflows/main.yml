@@ -117,6 +117,8 @@ jobs:
           targetPlatform: WebGL
           # Вызов C# метода автоматизации из Лабораторной работы №1!
           buildMethod: BuildManager.BuildWebGL
+          # Папка, куда BuildManager пишет результат (проверяется CLI после сборки)
+          buildsPath: Builds
           customImage: unityci/editor:ubuntu-6000.3.10f1-webgl-3
 
       # Сохраняем НАСТОЯЩИЕ скомпилированные файлы во временное облачное хранилище
