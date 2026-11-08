@@ -102,9 +102,13 @@ jobs:
           path: Library
           key: Library-Build-${{ hashFiles('Packages/packages-lock.json', 'Assets/**/*.asmdef') }}
 
-      # Вызываем облачный компилятор Unity 6 от GameCI
+      # Вызываем облачный компилятор Unity 6 от GameCI.
+      # Экшен v6 - обертка над game-ci CLI: поддерживает активацию Personal
+      # по UNITY_EMAIL + UNITY_PASSWORD (v4 требует .ulf, которую Unity 6
+      # для Personal больше не выдает). Версия образа зафиксирована явно
+      # через customImage, т.к. ProjectVersion.txt исключен .gitignore.
       - name: Build WebGL Player
-        uses: game-ci/unity-builder@v4
+        uses: game-ci/unity-builder@v6.0.0
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -113,8 +117,7 @@ jobs:
           targetPlatform: WebGL
           # Вызов C# метода автоматизации из Лабораторной работы №1!
           buildMethod: BuildManager.BuildWebGL
-          # Версия Unity указывается явно: ProjectVersion.txt в .gitignore
-          unityVersion: 6000.3.10f1
+          customImage: unityci/editor:ubuntu-6000.3.10f1-linux-il2cpp-3
 
       # Сохраняем НАСТОЯЩИЕ скомпилированные файлы во временное облачное хранилище
       - name: Upload WebGL Artifact
