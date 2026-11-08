@@ -41,6 +41,10 @@ public static class BuildManager
         {
             Debug.Log("[CI/CD] УСПЕХ! WebGL билд успешно создан.");
             Debug.Log($"[CI/CD] Время сборки: {summary.totalTime.TotalSeconds:F2} сек. Размер: {summary.totalSize} байт.");
+            // Маркер успешной сборки, который ожидает валидатор game-ci CLI
+            // (Unity 6 печатает "Build succeeded" без восклицательного знака,
+            // а таблицу "# Build results #" не печатает вовсе)
+            Debug.Log("Build succeeded!");
             ExitWithCode(0);
         }
         else
